@@ -897,17 +897,27 @@
 
   // A drop is a short-lived emitter: ink keeps flowing in for a moment,
   // while the initial impulse pushes the water into a vortex pair.
+  // A drop is a short-lived emitter. A clicked drop starts as a small core
+  // and opens into a soft cloud. A drop that fell in ("compact") behaves like
+  // the droplet itself: it keeps plunging with its momentum while drag slows
+  // it, shedding dense ink along the way; its wake then blooms on its own.
   function addDrop(x, y, color, o) {
     o = o || {};
     const size = o.size || 1;
+    const full = dropRadius() * size * (0.85 + Math.random() * 0.3);
+    const compact = !!o.compact;
     drops.push({
       x, y, color,
       life: 0,
-      duration: o.duration || (0.4 + Math.random() * 0.25),
-      amount: (o.amount || 1.6) * (0.85 + Math.random() * 0.4),
-      radius: dropRadius() * size * (0.85 + Math.random() * 0.3),
-      vx: o.vx !== undefined ? o.vx : (Math.random() - 0.5) * 70,
-      vy: o.vy !== undefined ? o.vy : -(55 + Math.random() * 75),
+      duration: o.duration || (compact ? 0.55 + Math.random() * 0.2 : 0.45 + Math.random() * 0.25),
+      amount: (o.amount || (compact ? 2.6 : 1.6)) * (0.85 + Math.random() * 0.4),
+      r0: compact ? Math.min(full, 0.00022) : full * 0.3,
+      r1: compact ? Math.max(0.0006, full * 0.45) : full,
+      pvx: o.pvx || 0,
+      pvy: o.pvy !== undefined ? o.pvy : (compact ? -(0.26 + Math.random() * 0.1) : 0),
+      drag: o.drag || 4.5,
+      vx: o.vx !== undefined ? o.vx : (Math.random() - 0.5) * (compact ? 30 : 70),
+      vy: o.vy !== undefined ? o.vy : (compact ? -(90 + Math.random() * 50) : -(55 + Math.random() * 75)),
       seed: Math.random() * 6.283,
       wobble: 0.22 + Math.random() * 0.3,
     });
@@ -924,7 +934,16 @@
       const dyeW = (Math.cos(Math.PI * t0) - Math.cos(Math.PI * t1)) * 0.5;
       // velocity: front-loaded impulse that integrates to 1
       const velW = (t1 - t0) * (2 - (t0 + t1));
-      splat(d.x, d.y, d.vx * velW, d.vy * velW, d.color, d.amount * dyeW, d.radius, d.wobble, d.seed + t1 * 0.6, 1.5);
+      // the droplet keeps moving through the water, slowed by drag
+      d.x += d.pvx * dt;
+      d.y += d.pvy * dt;
+      const k = Math.exp(-d.drag * dt);
+      d.pvx *= k; d.pvy *= k;
+      const s = t1 * t1 * (3 - 2 * t1);               // growth of the core
+      const r = lerp(d.r0, d.r1, s);
+      const dense = Math.min(6, d.r1 / r);             // same total ink, packed tighter early on
+      const velScale = Math.max(1.5, (d.r1 * 1.2) / r);
+      splat(d.x, d.y, d.vx * velW, d.vy * velW, d.color, d.amount * dyeW * dense, r, d.wobble * s, d.seed + t1 * 0.6, velScale);
     }
   }
 
@@ -954,30 +973,35 @@
 
   // A drop seen falling from the top of the page before it meets the water.
   function drip(x, y, color, options, onLand) {
+    options = Object.assign({ compact: true }, options || {});
     let landed = false;
-    const land = () => {
-      if (landed) return;
-      landed = true;
-      if (el) el.remove();
-      addDrop(x, y, color, options);
-      if (onLand) onLand();
-    };
-    if (reducedMotion) { land(); return; }
+    let el = null;
     const rect = canvas.getBoundingClientRect();
     const px = rect.left + x * rect.width;
     const py = rect.top + (1 - y) * rect.height;
-    const size = 6 + Math.min(1.6, (options && options.size) || 1) * 5;
-    const el = document.createElement('span');
+    const size = 6 + Math.min(1.6, options.size || 1) * 5;
+    const land = () => {
+      if (landed) return;
+      landed = true;
+      addDrop(x, y, color, options);
+      if (el) ripple(px, py + size / 2, true);
+      if (onLand) onLand();
+    };
+    if (reducedMotion) { land(); return; }
+    const fall = 0.55 + py / 720;                    // seconds until it meets the water
+    el = document.createElement('span');
     el.className = 'drip';
     el.style.left = (px - size / 2) + 'px';
     el.style.width = size + 'px';
     el.style.height = size + 'px';
-    el.style.background = cssColor(color);
+    el.style.setProperty('--c', cssColor(color));
     el.style.setProperty('--y', py.toFixed(1) + 'px');
-    el.style.setProperty('--d', (0.55 + py / 720).toFixed(2) + 's');
+    el.style.setProperty('--d', fall.toFixed(2) + 's');
     body.appendChild(el);
-    el.addEventListener('animationend', land);
-    setTimeout(land, 3000);
+    const impact = setTimeout(land, fall * 1000);
+    const remove = () => { clearTimeout(impact); land(); if (el) { el.remove(); el = null; } };
+    el.addEventListener('animationend', e => { if (e.animationName === 'drip-enter') remove(); });
+    setTimeout(remove, fall * 1000 + 1500);
   }
 
   function neighbourInk(ink) {
@@ -1385,9 +1409,9 @@
     els.modal.setAttribute('aria-hidden', open ? 'false' : 'true');
   }
 
-  function ripple(px, py) {
+  function ripple(px, py, small) {
     const r = document.createElement('span');
-    r.className = 'ripple';
+    r.className = small ? 'ripple small' : 'ripple';
     r.style.left = px + 'px';
     r.style.top = py + 'px';
     body.appendChild(r);
