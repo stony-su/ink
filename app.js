@@ -99,7 +99,7 @@
     { key: 'rain',      label: 'Rain' },
   ];
 
-  const RAIN_AFTER = 75;       // seconds without touching the water before it rains
+  const RAIN_AFTER = 20;       // seconds without touching the water before it rains
   const STROKE_FORCE = 1300;
   const HOVER_FORCE = 220;
   const TRAIL_AMOUNT = 0.12;

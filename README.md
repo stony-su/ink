@@ -26,7 +26,7 @@ Open `index.html` in any modern browser. No build step, no dependencies. It runs
 | , | settings |
 | ? | about |
 
-The interface fades away after a few seconds when the mouse rests (never while it is over a control) and returns on any movement or key. Left alone, the page keeps dropping ink on its own: single drops, pairs of related inks, and little runs of drips, each seen falling from the top of the page first. Leave it alone for a minute or so and it starts to rain: a shower that builds, holds for half a minute and eases off, then returns now and then for as long as nobody touches the water. Turn these off under *Settings → Auto drops* and *Settings → Rain*.
+The interface fades away after a few seconds when the mouse rests (never while it is over a control) and returns on any movement or key. Left alone, the page keeps dropping ink on its own: single drops, pairs of related inks, and little runs of drips, each seen falling from the top of the page first. Leave it alone for twenty seconds and it starts to rain: a shower that builds, holds for half a minute and eases off, then returns now and then for as long as nobody touches the water. Turn these off under *Settings → Auto drops* and *Settings → Rain*.
 
 ## How it works
 
