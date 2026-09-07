@@ -75,6 +75,7 @@
     grain: true,
     autoDrops: true,
     hoverStir: true,
+    rain: true,       // after a long quiet spell it starts to rain
   };
   const config = Object.assign({}, DEFAULTS);
   if (config.quality === 'low') { config.sharp = false; config.bloom = false; }
@@ -95,8 +96,10 @@
     { key: 'grain',     label: 'Grain' },
     { key: 'autoDrops', label: 'Auto drops' },
     { key: 'hoverStir', label: 'Hover stir' },
+    { key: 'rain',      label: 'Rain' },
   ];
 
+  const RAIN_AFTER = 75;       // seconds without touching the water before it rains
   const STROKE_FORCE = 1300;
   const HOVER_FORCE = 220;
   const TRAIL_AMOUNT = 0.12;
@@ -837,6 +840,7 @@
     hintDismissed: false,
     overUI: false,
     lastDropX: 0.5,
+    rain: { active: false, start: 0, duration: 0, endedAt: -1e9, nextAt: RAIN_AFTER, acc: 0, peak: 5, color: null, color2: null },
   };
   const drops = [];
   const pointers = new Map();
@@ -988,7 +992,7 @@
       if (onLand) onLand();
     };
     if (reducedMotion) { land(); return; }
-    const fall = 0.55 + py / 720;                    // seconds until it meets the water
+    const fall = (0.55 + py / 720) * (options.fall || 1);   // seconds until it meets the water
     el = document.createElement('span');
     el.className = 'drip';
     el.style.left = (px - size / 2) + 'px';
@@ -1019,7 +1023,7 @@
   }
 
   function autoDrops() {
-    if (!config.autoDrops || !state.introDone) return;
+    if (!config.autoDrops || !state.introDone || state.rain.active) return;
     const t = state.time;
     if (t < state.nextAutoDrop) return;
     if (t - state.lastInteraction < 4) { state.nextAutoDrop = t + 2 + Math.random() * 2; return; }
@@ -1055,6 +1059,57 @@
   }
 
   // ----------------------------------------------------------------
+  // Rain. Left alone long enough, the water is visited by a shower: it
+  // builds over a few seconds, holds, then eases off; a touch ends it.
+  // ----------------------------------------------------------------
+  const smooth = v => { v = clamp01(v); return v * v * (3 - 2 * v); };
+
+  function startRain(duration) {
+    const r = state.rain;
+    const ink = pickInk();
+    r.active = true;
+    r.start = state.time;
+    r.duration = duration || (26 + Math.random() * 20);
+    r.acc = 0;
+    r.peak = 3.5 + Math.random() * 1.8;              // drops per second at full strength
+    r.color = inkColor(ink);
+    r.color2 = inkColor(neighbourInk(ink));
+  }
+
+  function rain(dt) {
+    const r = state.rain;
+    if (!r.active) {
+      const quiet = state.time - state.lastInteraction;
+      if (config.rain && config.autoDrops && state.introDone && state.time >= r.nextAt && quiet > RAIN_AFTER) startRain();
+      return;
+    }
+    const t = state.time - r.start;
+    if (state.lastInteraction > r.start && r.duration > t + 1.5) r.duration = t + 1.5;   // someone touched the water
+    if (t >= r.duration) {
+      r.active = false;
+      r.endedAt = state.time;
+      r.nextAt = state.time + 90 + Math.random() * 60;
+      state.nextAutoDrop = state.time + 6 + Math.random() * 4;
+      return;
+    }
+    const env = smooth(t / 6) * (1 - smooth((t - (r.duration - 8)) / 8));
+    r.acc += r.peak * env * dt;
+    while (r.acc >= 1) {
+      r.acc -= 1;
+      const x = 0.04 + Math.random() * 0.92;
+      const y = 0.58 + Math.pow(Math.random(), 0.7) * 0.36;
+      const color = Math.random() < 0.85 ? r.color : r.color2;
+      drip(x, y, color, {
+        size: 0.28 + Math.random() * 0.28,
+        amount: 0.7 + Math.random() * 0.3,
+        fall: 0.75,
+        pvy: -(0.18 + Math.random() * 0.1),
+        vy: -(60 + Math.random() * 40),
+      });
+    }
+  }
+
+  // ----------------------------------------------------------------
   // Simulation step
   // ----------------------------------------------------------------
   function step(dt) {
@@ -1062,6 +1117,8 @@
     const simTexel = [velocity.texelSizeX, velocity.texelSizeY];
     const dyeTexel = [dye.texelSizeX, dye.texelSizeY];
     const clearBoost = state.clearing > 0 ? 45 : 0;
+    // rain fades the water a little faster, and it keeps clearing for a while afterwards
+    const rainFade = state.rain.active ? 0.06 : 0.06 * clamp01(1 - (state.time - state.rain.endedAt) / 25);
     let p;
 
     p = programs.curl; p.bind();
@@ -1132,7 +1189,7 @@
       gl.uniform1i(p.uniforms.uForward, dyeTmpA.attach(2));
       gl.uniform1i(p.uniforms.uBack, dyeTmpB.attach(3));
       gl.uniform1f(p.uniforms.dt, dt);
-      gl.uniform1f(p.uniforms.dissipation, config.dyeFade + clearBoost);
+      gl.uniform1f(p.uniforms.dissipation, config.dyeFade + clearBoost + rainFade);
       gl.uniform1f(p.uniforms.thinFade, config.clarity);
       blit(dye.write);
       dye.swap();
@@ -1140,7 +1197,7 @@
       gl.uniform2f(p.uniforms.dyeTexelSize, dyeTexel[0], dyeTexel[1]);
       gl.uniform1i(p.uniforms.uVelocity, velocity.read.attach(0));
       gl.uniform1i(p.uniforms.uSource, dye.read.attach(1));
-      gl.uniform1f(p.uniforms.dissipation, config.dyeFade + clearBoost);
+      gl.uniform1f(p.uniforms.dissipation, config.dyeFade + clearBoost + rainFade);
       gl.uniform1f(p.uniforms.thinFade, config.clarity);
       blit(dye.write);
       dye.swap();
@@ -1305,6 +1362,7 @@
     applyDrops(dt);
     applyPointers(dt);
     autoDrops();
+    rain(dt);
     step(dt);
   }
 
@@ -1715,6 +1773,7 @@
     palette: i => setPalette(i, true),
     ink: selectInk,
     pause: togglePause,
+    rain: seconds => startRain(seconds),
     // total amount of ink on screen (diagnostic; reads the GPU back)
     mass() {
       const w = dye.read.width, h = dye.read.height;
